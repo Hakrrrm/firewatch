@@ -3,13 +3,18 @@ import random
 import re
 import threading
 import time
+import urllib.error
+import urllib.request
 from datetime import timedelta
-from urllib.parse import quote
+from io import BytesIO
+from urllib.parse import quote, urlencode
 from pathlib import Path
 from uuid import uuid4
 
 import cv2
+import numpy as np
 from django.contrib import messages
+from django.conf import settings
 from django.db import transaction
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -424,6 +429,176 @@ def _build_5s_clip_for_event(event: Event, start_seconds: float, duration_second
 
         raise Http404("Unable to generate browser-compatible 5-second clip")
     return clip_path
+
+
+def _render_route_map_image(event: Event, route_data: dict) -> bytes:
+    layout = (route_data or {}).get("layout") or {}
+    cells = layout.get("cells") or []
+    rows = int(layout.get("rows") or len(cells) or 20)
+    cols = int(layout.get("cols") or (len(cells[0]) if cells else 20) or 20)
+    if not isinstance(cells, list) or not cells:
+        layout_obj = get_or_create_layout(event.zone)
+        cells = normalize_layout(layout_obj.rows, layout_obj.cols, layout_obj.cells_json)
+        rows = layout_obj.rows
+        cols = layout_obj.cols
+
+    cell_px = 28
+    margin = 20
+    img_h = rows * cell_px + margin * 2
+    img_w = cols * cell_px + margin * 2
+    img = np.full((img_h, img_w, 3), 255, dtype=np.uint8)
+
+    colors = {
+        "empty": (245, 245, 245),
+        "wall": (55, 55, 55),
+        "stairs": (209, 231, 255),
+        "entrance": (179, 255, 179),
+        "fire": (153, 153, 255),
+    }
+
+    for r in range(rows):
+        row = cells[r] if r < len(cells) and isinstance(cells[r], list) else []
+        for c in range(cols):
+            t = row[c] if c < len(row) else "empty"
+            tl = (margin + c * cell_px, margin + r * cell_px)
+            br = (tl[0] + cell_px - 1, tl[1] + cell_px - 1)
+            cv2.rectangle(img, tl, br, colors.get(t, colors["empty"]), -1)
+            cv2.rectangle(img, tl, br, (215, 215, 215), 1)
+
+    primary = ((route_data or {}).get("primary_route") or {}).get("path") or []
+    points = []
+    for p in primary:
+        if isinstance(p, list) and len(p) == 2:
+            rr, cc = int(p[0]), int(p[1])
+            points.append((margin + cc * cell_px + cell_px // 2, margin + rr * cell_px + cell_px // 2))
+
+    if len(points) >= 2:
+        cv2.polylines(img, [np.array(points, dtype=np.int32)], False, (0, 0, 255), thickness=4)
+    for pt in points:
+        cv2.circle(img, pt, 4, (0, 0, 200), -1)
+
+    entrance = (route_data or {}).get("entrance_cell")
+    target = (route_data or {}).get("target_cell")
+    if isinstance(entrance, list) and len(entrance) == 2:
+        ept = (margin + int(entrance[1]) * cell_px + cell_px // 2, margin + int(entrance[0]) * cell_px + cell_px // 2)
+        cv2.circle(img, ept, 8, (0, 180, 0), -1)
+        cv2.putText(img, "ENTRANCE", (ept[0] + 10, ept[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 100, 0), 1)
+
+    if isinstance(target, list) and len(target) == 2:
+        tpt = (margin + int(target[1]) * cell_px + cell_px // 2, margin + int(target[0]) * cell_px + cell_px // 2)
+        cv2.circle(img, tpt, 8, (0, 0, 255), -1)
+        cv2.putText(img, "FIRE", (tpt[0] + 10, tpt[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 140), 1)
+
+    cv2.putText(
+        img,
+        f"Event {event.event_id} | Zone {event.zone.code} | A* Route",
+        (margin, max(16, margin - 6)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (40, 40, 40),
+        1,
+    )
+    ok, encoded = cv2.imencode(".png", img)
+    if not ok:
+        raise RuntimeError("Failed to render route map image")
+    return encoded.tobytes()
+
+
+def _telegram_post(method: str, fields: dict, files: dict[str, tuple[str, bytes, str]] | None = None) -> dict:
+    token = str(getattr(settings, "TELEGRAM_BOT_TOKEN", "") or "").strip()
+    if not token:
+        return {"ok": False, "error": "TELEGRAM_BOT_TOKEN not configured"}
+    url = f"https://api.telegram.org/bot{token}/{method}"
+
+    if files:
+        boundary = f"----firewatch{uuid4().hex}"
+        body = BytesIO()
+        for k, v in fields.items():
+            body.write(f"--{boundary}\r\n".encode())
+            body.write(f'Content-Disposition: form-data; name="{k}"\r\n\r\n'.encode())
+            body.write(str(v).encode())
+            body.write(b"\r\n")
+        for field, (name, data, mime) in files.items():
+            body.write(f"--{boundary}\r\n".encode())
+            body.write(
+                f'Content-Disposition: form-data; name="{field}"; filename="{name}"\r\n'.encode()
+            )
+            body.write(f"Content-Type: {mime}\r\n\r\n".encode())
+            body.write(data)
+            body.write(b"\r\n")
+        body.write(f"--{boundary}--\r\n".encode())
+        req = urllib.request.Request(url, data=body.getvalue(), method="POST")
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    else:
+        encoded = urlencode({k: str(v) for k, v in fields.items()}).encode("utf-8")
+        req = urllib.request.Request(url, data=encoded, method="POST")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.URLError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _send_telegram_authority_notification(event: Event, mode: str) -> dict:
+    chat_id = str(getattr(settings, "TELEGRAM_CHAT_ID", "") or "").strip()
+    if not chat_id:
+        return {"ok": False, "error": "TELEGRAM_CHAT_ID not configured"}
+
+    risk = _risk_presentation(event)
+    cls = _latest_classification(event)
+    focus = _event_footage_focus(event)
+    route_data = compute_routes_for_event(event)
+    if "error" in route_data:
+        route_summary = f"Route error: {route_data['error']}"
+    else:
+        pr = route_data.get("primary_route") or {}
+        route_summary = (
+            f"Entrance {route_data.get('entrance_cell')} -> Fire {route_data.get('target_cell')} | "
+            f"cost={pr.get('cost')} | steps={len(pr.get('path') or [])}"
+        )
+
+    text = (
+        "🔥 FIREWATCH ESCALATION\n"
+        f"Event: {event.event_id}\n"
+        f"Mode: {mode}\n"
+        f"Risk: {risk['risk_label']} ({risk['confidence_percent']}%)\n"
+        f"Decision: {event.decision}\n"
+        f"Zone: {event.zone.code}\n"
+        f"Camera: {focus.get('camera_id') or cls.get('camera_id') or 'N/A'}\n"
+        f"Top class: {cls.get('top_classification', 'N/A')} (conf={cls.get('confidence', 0.0)})\n"
+        f"Frame timestamp: {cls.get('timestamp', 'N/A')}\n"
+        f"Route: {route_summary}\n"
+        "Triggered by dashboard escalation workflow."
+    )
+
+    results = {"message": _telegram_post("sendMessage", {"chat_id": chat_id, "text": text})}
+
+    try:
+        start_at = max(0.0, float(focus.get("detection_start_s", 0.0)))
+        clip_path = _build_5s_clip_for_event(event, start_at, duration_seconds=5.0)
+        video_bytes = clip_path.read_bytes()
+        results["video"] = _telegram_post(
+            "sendVideo",
+            {"chat_id": chat_id, "caption": f"Event {event.event_id} clip ({mode})"},
+            files={"video": (clip_path.name, video_bytes, "video/mp4")},
+        )
+    except Exception as exc:
+        results["video"] = {"ok": False, "error": str(exc)}
+
+    try:
+        map_png = _render_route_map_image(event, route_data)
+        results["map"] = _telegram_post(
+            "sendPhoto",
+            {"chat_id": chat_id, "caption": f"A* path to fire for {event.event_id}"},
+            files={"photo": (f"{event.event_id}_astar_map.png", map_png, "image/png")},
+        )
+    except Exception as exc:
+        results["map"] = {"ok": False, "error": str(exc)}
+
+    ok = all(bool((results.get(k) or {}).get("ok")) for k in ["message", "video", "map"])
+    return {"ok": ok, "results": results, "route_data": route_data}
 
 
 def _dashboard_live_payload() -> dict:
@@ -1181,11 +1356,13 @@ def authorities_escalate_api(request: HttpRequest, event_id: str) -> JsonRespons
     now = timezone.now()
 
     if mode == "auto_timeout":
-        status = "auto_escalation_triggered_telegram_pending"
-        note = "Auto-escalation placeholder only. Telegram forward module pending import."
+        status = "auto_escalation_triggered"
     else:
-        status = "manual_escalation_requested_telegram_pending"
-        note = "Manual escalation placeholder only. Telegram forward module pending import."
+        status = "manual_escalation_requested"
+
+    telegram_result = _send_telegram_authority_notification(event, mode=mode)
+    if not telegram_result.get("ok"):
+        status = f"{status}_telegram_partial_failure"
 
     logs = list(event.authority_notifications_json or [])
     logs.append(
@@ -1194,7 +1371,7 @@ def authorities_escalate_api(request: HttpRequest, event_id: str) -> JsonRespons
             "mode": mode,
             "risk_level": event.risk_level,
             "created_at": now.isoformat(),
-            "note": note,
+            "telegram": telegram_result,
         }
     )
     event.authority_notifications_json = logs
@@ -1211,6 +1388,7 @@ def authorities_escalate_api(request: HttpRequest, event_id: str) -> JsonRespons
             "mode": mode,
             "risk_level": event.risk_level,
             "escalation_status": status,
+            "telegram": telegram_result,
         }
     )
 

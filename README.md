@@ -49,6 +49,8 @@ Set key in `.env`:
 
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
+TELEGRAM_BOT_TOKEN=8610841747:AAHEbtxFdZ28VTlN0t5VoTZn5vxUXS9j1VU
+TELEGRAM_CHAT_ID=1334522798
 ```
 
 If no key is provided, classifier still runs in local-only mode.
@@ -92,10 +94,24 @@ This executes `classification/analyze_video.py` using:
 ### Notification behavior
 
 - First `Hazard` detection creates a distinct hazard notification card with footage/details.
-- First `Emergency` detection creates an urgent emergency notification card with stronger animation and a 30s countdown.
-- If no decision is made in 30s, an auto-timeout placeholder is triggered:
-  - Status set to `auto_call_triggered_module_missing`
-  - Actual authority call remains intentionally empty until teammate module is integrated.
+- First `Emergency` detection creates an urgent emergency notification card with stronger animation and a 20s countdown.
+- Escalation to authorities now sends Telegram notifications containing:
+  - Detection details text summary.
+  - 5-second video clip from the detected interval.
+  - Grid map image with A* shortest path from entrance to fire location.
+- Telegram send is triggered when:
+  - User clicks **Escalate To Authorities** (general cases).
+  - Emergency countdown reaches zero (auto-timeout case).
+
+### Telegram receiver setup (simulate authority notification)
+
+If a user wants to receive the Telegram escalation message (simulating notification to authorities), they must do this once in Telegram:
+
+1. Open chat with `FIREWATCH_BOTBOT`.
+2. Send `/start`.
+3. Send any random message (for example: `hello`).
+
+Without this first interaction, Telegram may block the bot from delivering the escalation notification to that user/chat.
 
 ### Emergency decision API
 
@@ -104,4 +120,4 @@ This executes `classification/analyze_video.py` using:
 Body:
 - `{\"action\":\"call_now\"}` (manual call placeholder)
 - `{\"action\":\"cancel\"}` (do not call)
-- `{\"action\":\"auto_timeout\"}` (used by countdown auto-trigger)
+- `{\"action\":\"auto_timeout\"}` (legacy placeholder action)

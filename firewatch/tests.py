@@ -1,4 +1,5 @@
-﻿import json
+import json
+from unittest.mock import patch
 
 from django.test import Client, TestCase
 
@@ -77,3 +78,44 @@ class FirewatchPipelineTests(TestCase):
 
         event = Event.objects.get(event_id=event_id)
         self.assertGreaterEqual(len(event.authority_notifications_json), 1)
+
+    @patch("firewatch.views._send_telegram_authority_notification")
+    def test_authorities_escalation_triggers_telegram_payload(self, mock_send):
+        mock_send.return_value = {
+            "ok": True,
+            "results": {
+                "message": {"ok": True},
+                "video": {"ok": True},
+                "map": {"ok": True},
+            },
+            "route_data": {"event_id": "evt_x"},
+        }
+
+        event = Event.objects.create(
+            event_id="evt_test_escalate",
+            trigger_type="manual",
+            sensor_id="unit_test",
+            zone=self.zone,
+            status="under_review",
+            risk_level="emergency",
+            decision="dispatch",
+            emergency_call_pending=True,
+        )
+
+        res = self.client.post(
+            f"/api/events/{event.event_id}/authorities/escalate/",
+            data=json.dumps({"mode": "manual"}),
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 200)
+        payload = res.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["escalation_status"], "manual_escalation_requested")
+
+        mock_send.assert_called_once()
+
+        event.refresh_from_db()
+        self.assertFalse(event.emergency_call_pending)
+        self.assertEqual(event.emergency_call_status, "manual_escalation_requested")
+        self.assertTrue(any(x.get("type") == "authorities_escalation_request" for x in event.authority_notifications_json))
+
