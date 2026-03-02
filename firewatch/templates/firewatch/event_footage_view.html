@@ -93,6 +93,9 @@
       {% else %}
       <div class="small">Escalation is available for this severity level.</div>
       {% endif %}
+      <div class="small" style="margin-top:8px;">Telegram username (optional):</div>
+      <input id="telegramUsername" type="text" placeholder="e.g. hakrrrm" style="width:100%; margin-top:6px; padding:8px; border-radius:8px; border:1px solid #cfd7e3;" />
+      <div class="small" style="margin-top:4px;">If provided, Firewatch resolves your chat id from bot updates using this username.</div>
       <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn warn" data-escalate="manual" type="button">Escalate To Authorities</button>
         {% if risk_info.risk_level == 'emergency' and event.emergency_call_pending %}
@@ -126,10 +129,11 @@
 
 <script>
 async function sendEscalation(mode) {
+  const telegramUsername = (document.getElementById("telegramUsername")?.value || "").trim();
   const res = await fetch(`/api/events/{{ event.event_id }}/authorities/escalate/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode }),
+    body: JSON.stringify({ mode, telegram_username: telegramUsername }),
   });
   if (!res.ok) return;
   window.location.reload();
