@@ -1,7 +1,8 @@
-﻿"""
+"""
 Django settings for firewatch_project project.
 """
 
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -72,3 +73,7 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8610841747:AAHEbtxFdZ28VTlN0t5VoTZn5vxUXS9j1VU")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1334522798")
