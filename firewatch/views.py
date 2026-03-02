@@ -30,7 +30,7 @@ from .classification_runtime import (
     run_classification_window,
 )
 from .models import Camera, Building, Event, EventAction, FrameDetection, RiskConfig, Zone
-from .pathfinding import compute_routes_for_event, get_or_create_layout, normalize_layout
+from .pathfinding import astar_path, compute_routes_for_event, get_or_create_layout, normalize_layout
 from .services import (
     aggregate_temporal_evidence,
     apply_advisory_reasoner,
@@ -541,15 +541,89 @@ def _telegram_post(method: str, fields: dict, files: dict[str, tuple[str, bytes,
         return {"ok": False, "error": str(exc)}
 
 
-def _send_telegram_authority_notification(event: Event, mode: str) -> dict:
-    chat_id = str(getattr(settings, "TELEGRAM_CHAT_ID", "") or "").strip()
+def _resolve_telegram_chat_id(telegram_username: str = "") -> str:
+    fallback_chat_id = str(getattr(settings, "TELEGRAM_CHAT_ID", "") or "").strip()
+    username = str(telegram_username or "").strip().lstrip("@").lower()
+    if not username:
+        return fallback_chat_id
+
+    updates = _telegram_post("getUpdates", {})
+    if not bool(updates.get("ok")):
+        return fallback_chat_id
+
+    for item in updates.get("result", []):
+        message = item.get("message") or {}
+        chat = message.get("chat") or {}
+        if str(chat.get("username") or "").lower() == username and chat.get("id") is not None:
+            return str(chat.get("id"))
+
+    return fallback_chat_id
+
+
+def _route_data_for_notification(event: Event) -> dict:
+    default_route = compute_routes_for_event(event)
+    sim = (event.stage_outputs_json or {}).get("sim_fire_seed") or {}
+    fire_cell = sim.get("fire_cell")
+    if not (isinstance(fire_cell, list) and len(fire_cell) == 2):
+        return default_route
+
+    layout = get_or_create_layout(event.zone)
+    cells = normalize_layout(layout.rows, layout.cols, layout.cells_json)
+    try:
+        target = (int(fire_cell[0]), int(fire_cell[1]))
+    except Exception:
+        return default_route
+
+    entrances = []
+    for r in range(layout.rows):
+        for c in range(layout.cols):
+            if cells[r][c] == "entrance":
+                entrances.append((r, c))
+    if not entrances:
+        entrances = [(0, 0)]
+
+    best = None
+    start = None
+    for ent in entrances:
+        route = astar_path(layout.rows, layout.cols, cells, ent, target)
+        if not route:
+            continue
+        if best is None or float(route.get("cost", 1e9)) < float(best.get("cost", 1e9)):
+            best = route
+            start = ent
+
+    if not best:
+        default_route["target_cell"] = [target[0], target[1]]
+        return default_route
+
+    return {
+        "event_id": event.event_id,
+        "zone": event.zone.code,
+        "target_type": "sim_fire_seed",
+        "target_camera_id": None,
+        "target_cell": [target[0], target[1]],
+        "entrance_cell": [start[0], start[1]] if start else None,
+        "primary_route": best,
+        "alternative_routes": [],
+        "blocked_cells": [],
+        "layout": {
+            "rows": layout.rows,
+            "cols": layout.cols,
+            "cells": cells,
+            "camera_points": layout.camera_points_json,
+        },
+    }
+
+
+def _send_telegram_authority_notification(event: Event, mode: str, telegram_username: str = "") -> dict:
+    chat_id = _resolve_telegram_chat_id(telegram_username)
     if not chat_id:
         return {"ok": False, "error": "TELEGRAM_CHAT_ID not configured"}
 
     risk = _risk_presentation(event)
     cls = _latest_classification(event)
     focus = _event_footage_focus(event)
-    route_data = compute_routes_for_event(event)
+    route_data = _route_data_for_notification(event)
     if "error" in route_data:
         route_summary = f"Route error: {route_data['error']}"
     else:
@@ -559,10 +633,14 @@ def _send_telegram_authority_notification(event: Event, mode: str) -> dict:
             f"cost={pr.get('cost')} | steps={len(pr.get('path') or [])}"
         )
 
+    recipient = str(telegram_username or "").strip().lstrip("@")
+    recipient_line = f"@{recipient}" if recipient else "default_chat"
+
     text = (
         "🔥 FIREWATCH ESCALATION\n"
         f"Event: {event.event_id}\n"
         f"Mode: {mode}\n"
+        f"Recipient: {recipient_line}\n"
         f"Risk: {risk['risk_label']} ({risk['confidence_percent']}%)\n"
         f"Decision: {event.decision}\n"
         f"Zone: {event.zone.code}\n"
@@ -1360,7 +1438,8 @@ def authorities_escalate_api(request: HttpRequest, event_id: str) -> JsonRespons
     else:
         status = "manual_escalation_requested"
 
-    telegram_result = _send_telegram_authority_notification(event, mode=mode)
+    telegram_username = str(payload.get("telegram_username", "")).strip()
+    telegram_result = _send_telegram_authority_notification(event, mode=mode, telegram_username=telegram_username)
     if not telegram_result.get("ok"):
         status = f"{status}_telegram_partial_failure"
 
@@ -1371,6 +1450,7 @@ def authorities_escalate_api(request: HttpRequest, event_id: str) -> JsonRespons
             "mode": mode,
             "risk_level": event.risk_level,
             "created_at": now.isoformat(),
+            "telegram_username": telegram_username,
             "telegram": telegram_result,
         }
     )
@@ -1388,6 +1468,7 @@ def authorities_escalate_api(request: HttpRequest, event_id: str) -> JsonRespons
             "mode": mode,
             "risk_level": event.risk_level,
             "escalation_status": status,
+            "telegram_username": telegram_username,
             "telegram": telegram_result,
         }
     )

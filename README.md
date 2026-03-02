@@ -113,6 +113,44 @@ If a user wants to receive the Telegram escalation message (simulating notificat
 
 Without this first interaction, Telegram may block the bot from delivering the escalation notification to that user/chat.
 
+### Telegram username -> chat id resolution
+
+To receive Telegram alerts in your own chat:
+
+1. Message the bot `FIREWATCH_BOTBOT`.
+2. Send `/start`.
+3. Send a test message to the bot.
+4. In Firewatch escalation UI, enter your Telegram username in the `telegram_username` field.
+
+Firewatch then resolves your chat id using bot updates (same logic as below, with your username substituted):
+
+```python
+import requests
+
+# Replace with your bot token
+BOT_TOKEN = "8610841747:AAHEbtxFdZ28VTlN0t5VoTZn5vxUXS9j1VU"
+URL = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+
+response = requests.get(URL)
+data = response.json()
+
+telegram_username = "your_telegram_username"
+chat_id = None
+
+# Loop through updates to find the user with this username
+for update in data.get("result", []):
+    message = update.get("message", {})
+    chat = message.get("chat", {})
+    if chat.get("username") == telegram_username:
+        chat_id = chat.get("id")
+        break
+
+if chat_id:
+    print(f"Chat ID for {telegram_username}: {chat_id}")
+else:
+    print(f"User '{telegram_username}' not found in updates.")
+```
+
 ### Emergency decision API
 
 `POST /api/events/<event_id>/emergency/decision/`
