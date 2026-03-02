@@ -16,13 +16,23 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+To use a specific Python version (3.10-3.12), create the venv with that interpreter:
+
+- macOS/Linux (example 3.11):
+  ```bash
+  python3.11 -m venv .venv
+  ```
+- Windows PowerShell (example 3.11):
+  ```powershell
+  py -3.11 -m venv .venv
+  ```
+
 ## 2) OpenAI key setup (optional)
 
 OpenAI is optional. Without a key, the script runs local-only.
 
 ```bash
 cp .env.example .env
-# fallback if dotfiles are hidden: cp env.example .env
 ```
 
 Then edit `.env`:
@@ -55,13 +65,14 @@ python classification/analyze_video.py \
   --results-dir results \
   --run-label incident_cam01_0000_0010 \
   --camera-id cam_01 \
-  --location-type warehouse
+  --location-type warehouse \
+  --device cpu
 ```
 
 PowerShell one-line example:
 
 ```powershell
-python classification/analyze_video.py --video video.mp4 --weights classification_model.pt --start-seconds 0 --analyze-seconds 10 --sample-fps 2 --conf 0.25 --results-dir results --run-label incident_cam01_0000_0010 --camera-id cam_01 --location-type warehouse
+python classification/analyze_video.py --video <path_to_video.mp4> --weights classification_model.pt --start-seconds 0 --analyze-seconds 10 --sample-fps 2 --conf 0.25 --results-dir results --run-label incident_cam01_0000_0010 --camera-id cam_01 --location-type warehouse --device cpu
 ```
 
 ## 4) Flags reference
@@ -75,7 +86,7 @@ python classification/analyze_video.py --video video.mp4 --weights classificatio
 - `--results-dir`: parent output folder.
 - `--run-label`: output subfolder name. If omitted, auto-generated.
 - `--camera-id`, `--location-type`: metadata forwarded into output/OpenAI payload.
-- `--demo-mode`: force local-only mode even if API key exists.
+- `--device`: inference device (`cpu` recommended for cross-device compatibility).
 
 ## 5) Output layout (one run)
 
@@ -109,7 +120,7 @@ OpenAI is called only when:
 1. uncertainty conditions are met, **or**
 2. local-only rank is `Emergency` (forced context verification).
 
-If key/client is unavailable (or `--demo-mode` is set), OpenAI is skipped and recorded in `openai.note`.
+If key/client is unavailable, OpenAI is skipped and recorded in `openai.note`.
 
 ## 8) Scoring and scenario levels
 

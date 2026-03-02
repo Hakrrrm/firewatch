@@ -15,6 +15,7 @@ from pathlib import Path
 from statistics import mean
 
 import cv2
+import numpy as np
 import yaml
 
 try:
@@ -114,8 +115,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scoring-config", type=Path, default=Path("classification/configs/scoring.yaml"))
     parser.add_argument("--camera-id", type=str, default="unknown_camera")
     parser.add_argument("--location-type", type=str, default="unknown_location")
-    parser.add_argument("--device", type=str, default="0")
-    parser.add_argument("--demo-mode", action="store_true", help="Force local-only demo mode (skip OpenAI even if key exists)")
+    parser.add_argument("--device", type=str, default="cpu")
     return parser.parse_args()
 
 
@@ -377,11 +377,11 @@ def analyze_video(args: argparse.Namespace) -> dict:
 
     top_fire_frame_path = run_dir / "top_fire.jpg"
     frame_to_write = top_fire_frame if top_fire_frame is not None else first_sample_frame
-    if frame_to_write is not None:
-        cv2.imwrite(str(top_fire_frame_path), frame_to_write)
-        top_fire_frame_path_str = str(top_fire_frame_path)
-    else:
-        top_fire_frame_path_str = None
+    if frame_to_write is None:
+        # Always emit a JPG artifact even when no frame is sampled in the selected window.
+        frame_to_write = np.zeros((max(frame_h, 1), max(frame_w, 1), 3), dtype=np.uint8)
+    wrote_jpg = cv2.imwrite(str(top_fire_frame_path), frame_to_write)
+    top_fire_frame_path_str = str(top_fire_frame_path) if wrote_jpg else None
 
     summary = _summarize_stats(stats)
     summary["top_fire_frame"] = {
@@ -399,10 +399,10 @@ def analyze_video(args: argparse.Namespace) -> dict:
     emergency_needs_verification = local_pre_openai_rank == "Emergency"
     should_call_openai = uncertain or emergency_needs_verification
 
-    openai_client = None if args.demo_mode else get_openai_client()
-    openai_enabled = (openai_client is not None) and (not args.demo_mode)
-    openai_unavailable_reason = "demo_mode" if args.demo_mode else ("missing_api_key_or_client_init_failure" if openai_client is None else "")
-    runtime_mode = "demo_local" if args.demo_mode or not openai_enabled else "openai_enabled"
+    openai_client = get_openai_client()
+    openai_enabled = openai_client is not None
+    openai_unavailable_reason = "missing_api_key_or_client_init_failure" if openai_client is None else ""
+    runtime_mode = "demo_local" if not openai_enabled else "openai_enabled"
 
     openai_payload = {
         "used": False,
@@ -428,14 +428,19 @@ def analyze_video(args: argparse.Namespace) -> dict:
             "end_s": end_s,
             "openai_trigger_reason": openai_payload["trigger_reason"],
         }
-        openai_result = reason_with_openai(
-            client=openai_client,
-            model=model_name,
-            image_path=Path(top_fire_frame_path_str),
-            metadata=metadata,
-            metrics={"aggregate_relative_confidence": agg, "risk_numbers": risk, "local_pre_openai_rank": local_pre_openai_rank},
-        )
-        openai_payload = {"used": True, **openai_result}
+        try:
+            openai_result = reason_with_openai(
+                client=openai_client,
+                model=model_name,
+                image_path=Path(top_fire_frame_path_str),
+                metadata=metadata,
+                metrics={"aggregate_relative_confidence": agg, "risk_numbers": risk, "local_pre_openai_rank": local_pre_openai_rank},
+            )
+            openai_payload = {"used": True, **openai_result}
+        except Exception as exc:
+            # Keep pipeline alive if OpenAI call fails (e.g., bad key/network/rate limit).
+            openai_payload["used"] = False
+            openai_payload["note"] = f"OpenAI call failed; fallback to local-only scoring ({exc.__class__.__name__})"
     elif should_call_openai and not openai_enabled:
         if emergency_needs_verification:
             openai_payload["note"] = f"local Emergency flagged; OpenAI verification skipped ({openai_unavailable_reason})"

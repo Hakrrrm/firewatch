@@ -75,7 +75,9 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
+# Telegram escalation settings.
+# Put your Telegram username (without @) in .env as TELEGRAM_USERNAME to receive escalation messages.
+# Firewatch resolves your chat ID from bot updates using this value; TELEGRAM_CHAT_ID is used as fallback.
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8610841747:AAHEbtxFdZ28VTlN0t5VoTZn5vxUXS9j1VU")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1334522798")
-
-TELEGRAM_USERNAME = os.getenv("TELEGRAM_USERNAME", "")
+TELEGRAM_USERNAME = os.getenv("TELEGRAM_USERNAME", "").strip()

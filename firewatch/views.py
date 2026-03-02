@@ -80,13 +80,17 @@ def _monitor_loop(event_id: str) -> None:
                 device="cpu",
             )
             new_next = next_start + interval
-            if video_duration > 0 and new_next >= video_duration:
-                new_next = 0.0
+            reached_end = video_duration > 0 and new_next >= video_duration
             with MONITOR_LOCK:
                 if event_id in EVENT_MONITORS:
-                    EVENT_MONITORS[event_id]["next_start_seconds"] = new_next
                     EVENT_MONITORS[event_id]["last_tick"] = timezone.now().isoformat()
                     EVENT_MONITORS[event_id]["last_error"] = ""
+                    if reached_end:
+                        EVENT_MONITORS[event_id]["enabled"] = False
+                    else:
+                        EVENT_MONITORS[event_id]["next_start_seconds"] = new_next
+            if reached_end:
+                break
         except Exception as exc:
             with MONITOR_LOCK:
                 if event_id in EVENT_MONITORS:
