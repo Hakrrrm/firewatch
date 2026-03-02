@@ -51,6 +51,7 @@ Set key in `.env`:
 OPENAI_API_KEY=your_openai_api_key_here
 TELEGRAM_BOT_TOKEN=8610841747:AAHEbtxFdZ28VTlN0t5VoTZn5vxUXS9j1VU
 TELEGRAM_CHAT_ID=1334522798
+TELEGRAM_USERNAME=your_telegram_username
 ```
 
 If no key is provided, classifier still runs in local-only mode.
@@ -120,7 +121,7 @@ To receive Telegram alerts in your own chat:
 1. Message the bot `FIREWATCH_BOTBOT`.
 2. Send `/start`.
 3. Send a test message to the bot.
-4. In Firewatch escalation UI, enter your Telegram username in the `telegram_username` field.
+4. Set your username in code/config using `TELEGRAM_USERNAME` (for example in `.env`).
 
 Firewatch then resolves your chat id using bot updates (same logic as below, with your username substituted):
 

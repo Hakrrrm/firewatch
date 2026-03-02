@@ -543,7 +543,8 @@ def _telegram_post(method: str, fields: dict, files: dict[str, tuple[str, bytes,
 
 def _resolve_telegram_chat_id(telegram_username: str = "") -> str:
     fallback_chat_id = str(getattr(settings, "TELEGRAM_CHAT_ID", "") or "").strip()
-    username = str(telegram_username or "").strip().lstrip("@").lower()
+    configured_username = str(getattr(settings, "TELEGRAM_USERNAME", "") or "").strip()
+    username = str(telegram_username or configured_username).strip().lstrip("@").lower()
     if not username:
         return fallback_chat_id
 
@@ -615,8 +616,9 @@ def _route_data_for_notification(event: Event) -> dict:
     }
 
 
-def _send_telegram_authority_notification(event: Event, mode: str, telegram_username: str = "") -> dict:
-    chat_id = _resolve_telegram_chat_id(telegram_username)
+def _send_telegram_authority_notification(event: Event, mode: str) -> dict:
+    configured_username = str(getattr(settings, "TELEGRAM_USERNAME", "") or "").strip()
+    chat_id = _resolve_telegram_chat_id(configured_username)
     if not chat_id:
         return {"ok": False, "error": "TELEGRAM_CHAT_ID not configured"}
 
@@ -633,22 +635,14 @@ def _send_telegram_authority_notification(event: Event, mode: str, telegram_user
             f"cost={pr.get('cost')} | steps={len(pr.get('path') or [])}"
         )
 
-    recipient = str(telegram_username or "").strip().lstrip("@")
-    recipient_line = f"@{recipient}" if recipient else "default_chat"
+    escalation_origin = "manual" if mode == "manual" else "system escalated"
 
     text = (
         "🔥 FIREWATCH ESCALATION\n"
-        f"Event: {event.event_id}\n"
-        f"Mode: {mode}\n"
-        f"Recipient: {recipient_line}\n"
-        f"Risk: {risk['risk_label']} ({risk['confidence_percent']}%)\n"
-        f"Decision: {event.decision}\n"
+        f"Risk: {risk['risk_label']}\n"
+        f"Decision: {escalation_origin}\n"
         f"Zone: {event.zone.code}\n"
-        f"Camera: {focus.get('camera_id') or cls.get('camera_id') or 'N/A'}\n"
-        f"Top class: {cls.get('top_classification', 'N/A')} (conf={cls.get('confidence', 0.0)})\n"
-        f"Frame timestamp: {cls.get('timestamp', 'N/A')}\n"
-        f"Route: {route_summary}\n"
-        "Triggered by dashboard escalation workflow."
+        f"Camera ID: {focus.get('camera_id') or cls.get('camera_id') or 'N/A'}"
     )
 
     results = {"message": _telegram_post("sendMessage", {"chat_id": chat_id, "text": text})}
@@ -1438,8 +1432,7 @@ def authorities_escalate_api(request: HttpRequest, event_id: str) -> JsonRespons
     else:
         status = "manual_escalation_requested"
 
-    telegram_username = str(payload.get("telegram_username", "")).strip()
-    telegram_result = _send_telegram_authority_notification(event, mode=mode, telegram_username=telegram_username)
+    telegram_result = _send_telegram_authority_notification(event, mode=mode)
     if not telegram_result.get("ok"):
         status = f"{status}_telegram_partial_failure"
 
@@ -1450,7 +1443,6 @@ def authorities_escalate_api(request: HttpRequest, event_id: str) -> JsonRespons
             "mode": mode,
             "risk_level": event.risk_level,
             "created_at": now.isoformat(),
-            "telegram_username": telegram_username,
             "telegram": telegram_result,
         }
     )
@@ -1468,7 +1460,6 @@ def authorities_escalate_api(request: HttpRequest, event_id: str) -> JsonRespons
             "mode": mode,
             "risk_level": event.risk_level,
             "escalation_status": status,
-            "telegram_username": telegram_username,
             "telegram": telegram_result,
         }
     )
