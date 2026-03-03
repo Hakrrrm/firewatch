@@ -1,103 +1,82 @@
-# Fire Detection Project
+# Firewatch: AI-Assisted Fire Risk Validation and Escalation
 
-This repo has two parts:
+Firewatch is a fire incident validation pipeline that combines computer vision, risk scoring, and operational response logic.
 
-- `model_training/` -> train/fine-tune YOLO for `controlled_fire`, `fire`, `smoke`
-- `classification/` -> runtime video risk classification
+The project is designed to reduce false alarms while still escalating quickly when high-risk events are detected.
 
-## Python version
+## What this project does
 
-Use Python `3.10` to `3.12`.
+Firewatch ingests CCTV footage, analyzes it in short intervals, and classifies scene risk into operational levels.  
+It supports:
 
-Use a specific interpreter when creating the virtual environment:
+- fire/smoke visual detection
+- risk scoring with weighted signals
+- optional contextual reasoning for difficult scenes
+- alerting and escalation workflows
+- authority notification payload generation
+- emergency public announcement triggers
 
-- macOS/Linux (example 3.11): `python3.11 -m venv .venv`
-- Windows PowerShell (example 3.11): `py -3.11 -m venv .venv`
+## Repository structure
 
-## Install
+- `model_training/`
+  - Training and fine-tuning workflows for the detection model.
+  - Model classes include `controlled_fire`, `fire`, and `smoke`.
+- `classification/`
+  - Runtime analysis pipeline for interval-based video classification.
+  - Produces per-interval artifacts (JSON metrics and JPG frame evidence).
+- `firewatch/` and `firewatch_project/`
+  - Django dashboard, APIs, monitoring loop, escalation logic, and notification integrations.
+- `testbench/`
+  - Step-by-step setup and testing guide for new users.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+## Working principles
 
-## Environment setup
+### 1. CCTV feed analysis
 
-```bash
-cp .env.example .env
-```
+The system processes footage in time windows (for example, 5-second intervals) and runs model inference on sampled frames.
 
-Edit `.env`:
+### 2. Fire validation with weighted scoring
 
-```env
-OPENAI_API_KEY=your_openai_api_key_here
-TELEGRAM_BOT_TOKEN=8610841747:AAHEbtxFdZ28VTlN0t5VoTZn5vxUXS9j1VU
-TELEGRAM_CHAT_ID=optional_fallback_chat_id_here
-TELEGRAM_USERNAME=your_telegram_username_without_at
-```
+Detection outputs are aggregated into risk signals (for example fire confidence, spread/flicker behavior, smoke presence, controlled vs uncontrolled fire evidence).  
+A weighted scoring model converts these signals into a final risk score.
 
-Notes:
+### 3. Optional contextual layer for challenging scenes
 
-- Replace `OPENAI_API_KEY` with your own key if you want OpenAI context classification.
-- Replace `TELEGRAM_CHAT_ID` only if you want a specific fallback chat.
-- Replace `TELEGRAM_USERNAME` with your own Telegram username (without `@`) if you want escalation messages.
-- If `OPENAI_API_KEY` is not set, the classifier runs in local-only mode.
-- `TELEGRAM_USERNAME` is where escalation notifications are routed by username resolution.
-- Telegram username configuration is read in `firewatch_project/settings.py` from `TELEGRAM_USERNAME`.
+When the scene is uncertain or locally appears severe, Firewatch can invoke an OpenAI contextual step to improve decision reliability.  
+If no valid API key is available, the pipeline continues in local-only mode.
 
-## Classification quick start (single-window)
+### 4. Classification levels
 
-Each run analyzes one selected time window and outputs one JSON + one JPG:
+Firewatch maps scores into operational levels:
 
-```bash
-python classification/analyze_video.py \
-  --video /path/to/video.mp4 \
-  --weights classification_model.pt \
-  --start-seconds 0 \
-  --analyze-seconds 10 \
-  --sample-fps 2 \
-  --conf 0.25 \
-  --results-dir results \
-  --run-label incident_cam01_0000_0010 \
-  --camera-id cam_01 \
-  --location-type warehouse \
-  --device=cpu
-```
+- `No Fire Risk`
+- `Elevated Risk`
+- `Hazard`
+- `Emergency`
 
-Outputs:
+Each level maps to different response behavior.
 
-- `results/<run-label>/metrics.json`
-- `results/<run-label>/top_fire.jpg`
+### 5. Response and escalation
 
-For full flags/docs, see `classification/README.md`.
+At higher severities, Firewatch triggers response workflows such as:
 
-## Dashboard integration (video mode)
+- dashboard hazard/emergency alerts
+- escalation actions for authorities
+- Telegram escalation payload delivery
+- emergency evacuation/public announcement events
 
-The dashboard currently classifies from `video.mp4`/`video.MP4`.
+## Why this exists
 
-Main URLs:
+Traditional fire alerts can be noisy in real environments. Firewatch focuses on:
 
-- Dashboard: `http://127.0.0.1:8000/`
-- Event detail: `http://127.0.0.1:8000/events/<event_id>/`
-- Event footage: `http://127.0.0.1:8000/events/<event_id>/footage/`
+- validating alarms before escalation when possible
+- escalating quickly when evidence indicates real danger
+- preserving explainable evidence for each decision window
 
-Notification behavior:
+## Setup and test guide
 
-- First `Hazard` detection creates a hazard notification card.
-- First `Emergency` detection creates an urgent card with a 20-second countdown.
-- Clicking **Escalate To Authorities** (or emergency timeout) sends Telegram:
-  - detection summary text
-  - 5-second interval clip
-  - A* route map image
+Detailed installation, environment setup, and end-to-end test instructions are in:
 
-Telegram receiver setup (one-time):
+- `testbench/README.md`
 
-1. Open chat with `FIREWATCH_BOTBOT`.
-2. Send `/start`.
-3. Send any message (for example `hello`).
-4. Set `TELEGRAM_USERNAME` in `.env` (without `@`).
-
-## Testbench guide
-
-For a full no-prior-knowledge tester workflow (Windows + macOS), see `testbench/README.md`.
+Use that document as the canonical onboarding guide for running and validating this project.
