@@ -102,7 +102,7 @@ Open `http://127.0.0.1:8000/`.
 5. If available, click `Escalate To Authorities`.
 6. Check for telegram notification if initialised in step 5
 
-## 9. Optional manual classifier command
+## 9. Performing an Admin Reset
 If you would like to run the simulation again, please click the admin button in the top right corner of the page and click reset events before navigating to the home page again.
 
 Expected timing:
