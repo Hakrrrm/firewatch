@@ -67,12 +67,12 @@ TELEGRAM_USERNAME=your_telegram_username_without_at
 
 What to change explicitly:
 
-- Replace `OPENAI_API_KEY` with your own key if you want OpenAI context classification.
+- Replace `OPENAI_API_KEY` with your own key if you want OpenAI context classification. (Recommended)
 - Leave `OPENAI_API_KEY` empty if you want local-only mode.
-- Replace `TELEGRAM_USERNAME` with your own Telegram username (without `@`) if you want escalation messages in your chat.
+- Replace `TELEGRAM_USERNAME` with your own Telegram username (without `@`) if you want escalation messages in your chat. (Recommended)
 - Replace `TELEGRAM_CHAT_ID` only if you want to use a specific fallback chat id.
 
-## 5. Telegram one-time setup (if testing escalation messages)
+## 5. Telegram one-time setup (Recommended)
 
 1. Open Telegram and find `FIREWATCH_BOTBOT`.
 2. Send `/start`.
@@ -100,22 +100,16 @@ Open `http://127.0.0.1:8000/`.
 3. Open the event and click `View Footage`.
 4. Check the risk screen (`No Fire Risk`, `Elevated Risk`, `Hazard`, or `Emergency`).
 5. If available, click `Escalate To Authorities`.
+6. Check for telegram notification if initialised in step 5
+
+## 9. Optional manual classifier command
+If you would like to run the simulation again, please click the admin button in the top right corner of the page and click reset events before navigating to the home page again.
 
 Expected timing:
 
 - Classification speed depends on device.
 - Allow up to about 60 seconds on slower machines.
 - Current default is CPU for compatibility, so slower than hardware-optimized production setup.
-
-## 9. What to verify
-
-- Interval results are created as JSON and JPG artifacts.
-- Monitoring stops at end-of-video (it should not keep creating new interval files forever).
-- Escalation status updates in the footage view.
-- If Telegram setup is correct, escalation sends:
-  - text summary
-  - 5-second clip
-  - route map image
 
 ## 10. Optional manual classifier command
 
